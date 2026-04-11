@@ -1,3 +1,6 @@
 package com.entr.translator.dto;
 
-public record GrammarIssue(String message, String shortMessage, String replacement, int offset, int length) {}
+/**
+ * type: grammar | spelling | style | conciseness
+ */
+public record GrammarIssue(String type, String message, String shortMessage, String replacement, int offset, int length) {}

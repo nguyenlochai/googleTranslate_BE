@@ -40,6 +40,10 @@ public class GrammarService {
             List<Map<String, Object>> matches = body == null ? List.of() : (List<Map<String, Object>>) body.getOrDefault("matches", List.of());
             List<GrammarIssue> issues = new ArrayList<>();
 
+            // 1) Custom fixes for repeated trailing letters (e.g. fromssss -> from)
+            issues.addAll(buildRepeatedLetterIssues(text));
+
+            // 2) LanguageTool matches
             String corrected = text;
             for (Map<String, Object> match : matches) {
                 String message = String.valueOf(match.getOrDefault("message", ""));
@@ -53,7 +57,8 @@ public class GrammarService {
                     replacement = String.valueOf(replacements.get(0).getOrDefault("value", ""));
                 }
 
-                issues.add(new GrammarIssue(message, shortMessage, replacement, offset, length));
+                String type = detectIssueType(match);
+                issues.add(new GrammarIssue(type, message, shortMessage, replacement, offset, length));
             }
 
             corrected = applyCorrections(text, issues);
@@ -82,6 +87,55 @@ public class GrammarService {
             }
         }
         return result;
+    }
+
+    @SuppressWarnings("unchecked")
+    private String detectIssueType(Map<String, Object> match) {
+        try {
+            Map<String, Object> rule = (Map<String, Object>) match.getOrDefault("rule", Map.of());
+            String issueType = String.valueOf(rule.getOrDefault("issueType", ""));
+            if (issueType != null) issueType = issueType.toLowerCase();
+
+            Map<String, Object> category = (Map<String, Object>) rule.getOrDefault("category", Map.of());
+            String catId = String.valueOf(category.getOrDefault("id", ""));
+            if (catId != null) catId = catId.toLowerCase();
+
+            if ("misspelling".equals(issueType) || catId.contains("typos")) return "spelling";
+            if (catId.contains("style")) return "style";
+            return "grammar";
+        } catch (Exception ignore) {
+            return "grammar";
+        }
+    }
+
+    private List<GrammarIssue> buildRepeatedLetterIssues(String text) {
+        // Detect words ending with 3+ repeated letters: fromssss -> from
+        // Offset/length are for the whole token so UI replacement is obvious.
+        List<GrammarIssue> list = new ArrayList<>();
+        if (text == null || text.isBlank()) return list;
+
+        // word boundary, capture base + trailing repeats
+        java.util.regex.Pattern p = java.util.regex.Pattern.compile("\\b([A-Za-z]{2,}?)([A-Za-z])\\2{2,}\\b");
+        java.util.regex.Matcher m = p.matcher(text);
+        while (m.find()) {
+            String base = m.group(1);
+            String token = m.group(0);
+            int offset = m.start();
+            int length = token.length();
+
+            // Only if base looks meaningful
+            if (base != null && base.length() >= 2 && !base.equalsIgnoreCase(token)) {
+                list.add(new GrammarIssue(
+                        "spelling",
+                        "Repeated letters detected",
+                        "SPELLING",
+                        base,
+                        offset,
+                        length
+                ));
+            }
+        }
+        return list;
     }
 
     private String improveText(String text) {
