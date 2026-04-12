@@ -4,6 +4,7 @@ import com.entr.translator.model.LookupHistory;
 import com.entr.translator.model.User;
 import com.entr.translator.repository.LookupHistoryRepository;
 import com.entr.translator.repository.UserRepository;
+import com.entr.translator.security.AuthHelper;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -13,26 +14,39 @@ import java.util.List;
 public class HistoryController {
     private final LookupHistoryRepository historyRepository;
     private final UserRepository userRepository;
+    private final AuthHelper authHelper;
 
-    public HistoryController(LookupHistoryRepository historyRepository, UserRepository userRepository) {
+    public HistoryController(LookupHistoryRepository historyRepository, UserRepository userRepository, AuthHelper authHelper) {
         this.historyRepository = historyRepository;
         this.userRepository = userRepository;
+        this.authHelper = authHelper;
     }
 
     @GetMapping
-    public List<LookupHistory> getHistory(@RequestParam String email) {
-        User user = userRepository.findByEmail(email)
+    public List<LookupHistory> getHistory(
+            @RequestParam(required = false) String email,
+            @RequestHeader(value = "Authorization", required = false) String authorization
+    ) {
+        String resolvedEmail = authHelper.resolveEmail(email, authorization);
+        if (resolvedEmail == null) throw new RuntimeException("Unauthorized");
+
+        User user = userRepository.findByEmail(resolvedEmail)
                 .orElseThrow(() -> new RuntimeException("User not found"));
         return historyRepository.findTop20ByUserIdOrderByCreatedAtDesc(user.getId());
     }
 
     @PostMapping("/mastery")
     public void updateMastery(
-            @RequestParam String email, 
-            @RequestParam String word, 
+            @RequestParam(required = false) String email,
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @RequestParam String word,
             @RequestParam(required = false) Integer score,
-            @RequestParam(required = false) Integer fluency) {
-        User user = userRepository.findByEmail(email)
+            @RequestParam(required = false) Integer fluency
+    ) {
+        String resolvedEmail = authHelper.resolveEmail(email, authorization);
+        if (resolvedEmail == null) throw new RuntimeException("Unauthorized");
+
+        User user = userRepository.findByEmail(resolvedEmail)
                 .orElseThrow(() -> new RuntimeException("User not found"));
         // Find most recent lookup for this word
         List<LookupHistory> history = historyRepository.findTop20ByUserIdOrderByCreatedAtDesc(user.getId());
