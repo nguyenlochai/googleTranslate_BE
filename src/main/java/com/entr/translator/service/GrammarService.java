@@ -40,8 +40,15 @@ public class GrammarService {
             List<Map<String, Object>> matches = body == null ? List.of() : (List<Map<String, Object>>) body.getOrDefault("matches", List.of());
             List<GrammarIssue> issues = new ArrayList<>();
 
-            // 1) Custom fixes for repeated trailing letters (e.g. fromssss -> from)
-            issues.addAll(buildRepeatedLetterIssues(text));
+            // 1) Custom fixes for repeated trailing letters (e.g. frommm -> from)
+            List<GrammarIssue> customIssues = buildRepeatedLetterIssues(text);
+            issues.addAll(customIssues);
+
+            // When a custom issue covers a token range, skip LanguageTool suggestions overlapping that range.
+            List<int[]> customRanges = new ArrayList<>();
+            for (GrammarIssue ci : customIssues) {
+                customRanges.add(new int[]{ci.offset(), ci.offset() + ci.length()});
+            }
 
             // 2) LanguageTool matches
             String corrected = text;
@@ -50,6 +57,15 @@ public class GrammarService {
                 String shortMessage = String.valueOf(match.getOrDefault("shortMessage", ""));
                 int offset = ((Number) match.getOrDefault("offset", 0)).intValue();
                 int length = ((Number) match.getOrDefault("length", 0)).intValue();
+
+                // Skip overlaps with our repeated-letter fix to avoid duplicate/confusing suggestions
+                int start = offset;
+                int end = offset + length;
+                boolean overlaps = false;
+                for (int[] r : customRanges) {
+                    if (start < r[1] && end > r[0]) { overlaps = true; break; }
+                }
+                if (overlaps) continue;
 
                 String replacement = "";
                 List<Map<String, Object>> replacements = (List<Map<String, Object>>) match.getOrDefault("replacements", List.of());
@@ -109,27 +125,32 @@ public class GrammarService {
     }
 
     private List<GrammarIssue> buildRepeatedLetterIssues(String text) {
-        // Detect words ending with 3+ repeated letters: fromssss -> from
+        // Detect words ending with repeated letters (e.g. frommm -> from)
         // Offset/length are for the whole token so UI replacement is obvious.
         List<GrammarIssue> list = new ArrayList<>();
         if (text == null || text.isBlank()) return list;
 
-        // word boundary, capture base + trailing repeats
-        java.util.regex.Pattern p = java.util.regex.Pattern.compile("\\b([A-Za-z]{2,}?)([A-Za-z])\\2{2,}\\b");
+        // Capture prefix + last letter repeated 2+ times at the end.
+        // Example: Frommmm => prefix="Fro", last="m", repeats="mm" => replacement "From".
+        java.util.regex.Pattern p = java.util.regex.Pattern.compile("\\b([A-Za-z]{2,}?)([A-Za-z])\\2{1,}\\b");
         java.util.regex.Matcher m = p.matcher(text);
         while (m.find()) {
-            String base = m.group(1);
+            String prefix = m.group(1);
+            String last = m.group(2);
             String token = m.group(0);
             int offset = m.start();
             int length = token.length();
 
-            // Only if base looks meaningful
-            if (base != null && base.length() >= 2 && !base.equalsIgnoreCase(token)) {
+            String replacement = (prefix == null ? "" : prefix) + (last == null ? "" : last);
+            if (replacement.length() < 2) continue;
+
+            // Only if we actually change something
+            if (!replacement.equalsIgnoreCase(token)) {
                 list.add(new GrammarIssue(
                         "spelling",
                         "Repeated letters detected",
                         "SPELLING",
-                        base,
+                        replacement,
                         offset,
                         length
                 ));
