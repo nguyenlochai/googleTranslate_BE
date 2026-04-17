@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -62,6 +63,23 @@ public class TranslationService {
     private final Map<String, String> cache = new ConcurrentHashMap<>();
     private static final int MAX_CHUNK_CHARS = 280;
 
+    // Quick glossary to prevent common absurd vi->en mistakes in learning context.
+    private static final Map<String, String> VI_EN_GLOSSARY = Map.ofEntries(
+            Map.entry("chao moi nguoi", "hello everyone"),
+            Map.entry("xin chao ban", "hello"),
+            Map.entry("sach toan", "math textbook"),
+            Map.entry("sach ngu van", "literature textbook"),
+            Map.entry("sach khoa hoc", "science textbook"),
+            Map.entry("hoc sinh", "student"),
+            Map.entry("giao vien", "teacher")
+    );
+
+    private static final Set<String> BAD_VI_EN_PHRASES = Set.of(
+            "dumb valve",
+            "black african",
+            "sach attempt"
+    );
+
     public TranslateResponse translate(String text, String source, String target) {
         if (text == null) return new TranslateResponse("", source, target, "LocalStable");
 
@@ -75,6 +93,14 @@ public class TranslationService {
         }
 
         boolean viToEn = "vi".equalsIgnoreCase(source) && "en".equalsIgnoreCase(target);
+
+        if (viToEn) {
+            String glossaryHit = translateByGlossary(cleanText);
+            if (glossaryHit != null) {
+                cache.put(cacheKey, glossaryHit);
+                return new TranslateResponse(glossaryHit, source, target, "Glossary");
+            }
+        }
 
         // ChatGPT-first for vi -> en. Optionally enforce AI-only mode.
         if (viToEn) {
@@ -508,6 +534,7 @@ public class TranslationService {
 
         if (t.equalsIgnoreCase(s)) return false;
         if (looksEncodedJunk(t)) return false;
+        if (BAD_VI_EN_PHRASES.contains(t.toLowerCase())) return false;
         if (strictEnglish && !isLikelyEnglishOnly(t)) return false;
 
         return true;
@@ -531,6 +558,18 @@ public class TranslationService {
         String s = input.replace('đ', 'd').replace('Đ', 'D');
         String normalized = Normalizer.normalize(s, Normalizer.Form.NFD);
         return normalized.replaceAll("\\p{M}+", "");
+    }
+
+    private String normalizeViForLookup(String input) {
+        if (input == null) return "";
+        String s = removeVietnameseDiacritics(input).toLowerCase();
+        return s.replaceAll("[^a-z0-9\\s]", " ").replaceAll("\\s+", " ").trim();
+    }
+
+    private String translateByGlossary(String input) {
+        String key = normalizeViForLookup(input);
+        if (key.isBlank()) return null;
+        return VI_EN_GLOSSARY.get(key);
     }
 
     private int countWords(String text) {
