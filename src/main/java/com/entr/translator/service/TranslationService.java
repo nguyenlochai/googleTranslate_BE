@@ -161,6 +161,21 @@ public class TranslationService {
     }
 
     private String translateUnitRobust(String text, String source, String target, boolean strictEnglish) {
+        // Short vi->en phrases need a stricter path to avoid outputs like "sach attempt".
+        if (strictEnglish && countWords(text) <= 4) {
+            String mmVi = retryProvider(() -> tryMyMemory(text, "vi", "en"), 2);
+            if (isAcceptable(text, mmVi, true)) return mmVi;
+
+            String mmViVn = retryProvider(() -> tryMyMemory(text, "vi-VN", "en"), 2);
+            if (isAcceptable(text, mmViVn, true)) return mmViVn;
+
+            String gpub = retryProvider(() -> tryGooglePublic(text, source, target), 2);
+            if (isAcceptable(text, gpub, true)) return gpub;
+
+            String libre = retryProvider(() -> tryLibreTranslate(text, source, target), 1);
+            if (isAcceptable(text, libre, true)) return libre;
+        }
+
         // Provider order for free/local stability:
         // 1) LibreTranslate public instance
         // 2) Argos local offline (if available)
@@ -432,6 +447,11 @@ public class TranslationService {
         return normalized.replaceAll("\\p{M}+", "");
     }
 
+    private int countWords(String text) {
+        if (text == null || text.isBlank()) return 0;
+        return text.trim().split("\\s+").length;
+    }
+
     private boolean isLikelyEnglishOnly(String text) {
         if (text == null || text.isBlank()) return false;
         String lower = text.toLowerCase();
@@ -445,7 +465,7 @@ public class TranslationService {
         String normalized = lower.replaceAll("[^a-z\\s]", " ").replaceAll("\\s+", " ").trim();
         if (normalized.isBlank()) return false;
 
-        String[] viTokens = {"toi", "ban", "va", "khong", "co", "ngay", "mai", "choi", "thoi", "nao", "viec", "moi", "di", "la", "mot", "cua", "duoc", "anh", "viet"};
+        String[] viTokens = {"toi", "ban", "va", "khong", "co", "ngay", "mai", "choi", "thoi", "nao", "viec", "moi", "di", "la", "mot", "cua", "duoc", "anh", "viet", "sach", "toan", "nguoi", "yeu", "hoc", "sinh", "giao", "vien"};
         int hit = 0;
         for (String t : viTokens) {
             if (normalized.matches(".*\\b" + t + "\\b.*")) hit++;
