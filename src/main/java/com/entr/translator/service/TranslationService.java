@@ -40,16 +40,17 @@ public class TranslationService {
             return new TranslateResponse(cleanText, source, target, "FallbackOriginal");
         }
 
-        // VI -> EN: thêm nhánh riêng, ưu tiên Google text endpoint để tránh kết quả trộn Việt/Anh.
+        // VI -> EN: chỉ tối ưu riêng nhánh này, không ảnh hưởng logic khác.
         if (viToEn) {
-            String gDirect = tryGoogleViToEnDirect(cleanText);
-            if (isUsableTranslation(cleanText, gDirect) && isLikelyEnglishOnly(gDirect)) {
-                return new TranslateResponse(gDirect, source, target, "GoogleViEnDirect");
-            }
-
+            // Ưu tiên MyMemory trước vì thường ra câu EN ổn định hơn cho tiếng Việt có dấu.
             String mm = tryMyMemory(cleanText, source, target);
             if (isUsableTranslation(cleanText, mm) && isLikelyEnglishOnly(mm)) {
                 return new TranslateResponse(mm, source, target, "MyMemory");
+            }
+
+            String gDirect = tryGoogleViToEnDirect(cleanText);
+            if (isUsableTranslation(cleanText, gDirect) && isLikelyEnglishOnly(gDirect)) {
+                return new TranslateResponse(gDirect, source, target, "GoogleViEnDirect");
             }
 
             String g = tryGoogle(cleanText, source, target);
@@ -59,18 +60,18 @@ public class TranslationService {
 
             String ascii = removeVietnameseDiacritics(cleanText);
             if (!ascii.equalsIgnoreCase(cleanText) && !ascii.isBlank()) {
-                String gAscii = tryGoogleViToEnDirect(ascii);
-                if (isUsableTranslation(ascii, gAscii)) {
-                    return new TranslateResponse(gAscii, source, target, "GoogleViEnAsciiDirect");
-                }
-
                 String mmAscii = tryMyMemory(ascii, source, target);
-                if (isUsableTranslation(ascii, mmAscii)) {
+                if (isUsableTranslation(ascii, mmAscii) && isLikelyEnglishOnly(mmAscii)) {
                     return new TranslateResponse(mmAscii, source, target, "MyMemoryAsciiFallback");
                 }
 
+                String gAscii = tryGoogleViToEnDirect(ascii);
+                if (isUsableTranslation(ascii, gAscii) && isLikelyEnglishOnly(gAscii)) {
+                    return new TranslateResponse(gAscii, source, target, "GoogleViEnAsciiDirect");
+                }
+
                 String gAsciiFallback = tryGoogle(ascii, source, target);
-                if (isUsableTranslation(ascii, gAsciiFallback)) {
+                if (isUsableTranslation(ascii, gAsciiFallback) && isLikelyEnglishOnly(gAsciiFallback)) {
                     return new TranslateResponse(gAsciiFallback, source, target, "GoogleAsciiFallback");
                 }
             }
@@ -233,14 +234,18 @@ public class TranslationService {
 
     private String safeMultiDecode(String input) {
         if (input == null) return "";
-        String out = input;
+        String out = input.trim();
 
-        // Decode up to 3 rounds for cases like s%25C3%25A1ch -> s%C3%A1ch -> sách
-        for (int i = 0; i < 3; i++) {
+        // Fix malformed percent-encoding like "% C3" or "% 20"
+        out = out.replaceAll("%\\s+", "%");
+
+        // Decode up to 4 rounds for cases like s%2525C3%2525A1ch -> s%25C3%25A1ch -> s%C3%A1ch -> sách
+        for (int i = 0; i < 4; i++) {
             try {
                 String decoded = URLDecoder.decode(out, StandardCharsets.UTF_8);
                 if (decoded.equals(out)) break;
                 out = decoded;
+                out = out.replaceAll("%\\s+", "%");
             } catch (Exception e) {
                 break;
             }
@@ -257,8 +262,26 @@ public class TranslationService {
 
     private boolean isLikelyEnglishOnly(String text) {
         if (text == null || text.isBlank()) return false;
-        // Reject mixed Vietnamese output such as: "ngày tomorrow tôi..."
-        return !text.matches(".*[đĐăĂâÂêÊôÔơƠưƯáàảãạấầẩẫậắằẳẵặéèẻẽẹếềểễệíìỉĩịóòỏõọốồổỗộớờởỡợúùủũụứừửữựýỳỷỹỵ].*");
+
+        String lower = text.toLowerCase();
+
+        // Reject Vietnamese accented chars.
+        if (lower.matches(".*[đăâêôơưáàảãạấầẩẫậắằẳẵặéèẻẽẹếềểễệíìỉĩịóòỏõọốồổỗộớờởỡợúùủũụứừửữựýỳỷỹỵ].*")) {
+            return false;
+        }
+
+        // Reject common unaccented Vietnamese tokens to avoid mixed outputs like "di choi thoi nao".
+        String normalized = lower.replaceAll("[^a-z\\s]", " ").replaceAll("\\s+", " ").trim();
+        if (normalized.isBlank()) return false;
+
+        String[] viTokens = {"toi", "ban", "va", "khong", "co", "ngay", "mai", "choi", "thoi", "nao", "viec", "moi", "di", "la", "mot", "cua", "duoc"};
+        int hit = 0;
+        for (String t : viTokens) {
+            if (normalized.matches(".*\\b" + t + "\\b.*")) hit++;
+            if (hit >= 2) return false;
+        }
+
+        return true;
     }
 
     private boolean isUsableTranslation(String sourceText, String translatedText) {
