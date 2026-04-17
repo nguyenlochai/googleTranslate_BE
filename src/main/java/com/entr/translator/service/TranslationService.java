@@ -93,6 +93,7 @@ public class TranslationService {
         }
 
         boolean viToEn = "vi".equalsIgnoreCase(source) && "en".equalsIgnoreCase(target);
+        boolean enToVi = "en".equalsIgnoreCase(source) && "vi".equalsIgnoreCase(target);
 
         if (viToEn) {
             String glossaryHit = translateByGlossary(cleanText);
@@ -112,6 +113,15 @@ public class TranslationService {
 
             if (aiOnlyViToEn) {
                 return new TranslateResponse("[ChatGPT unavailable: check APP_TRANSLATE_AI_API_KEY / APP_TRANSLATE_AI_URL]", source, target, "ChatGPTUnavailable");
+            }
+        }
+
+        // For long en -> vi text (>10 words), use ChatGPT translation first.
+        if (enToVi && countWords(cleanText) > 10) {
+            String aiEnVi = retryProvider(() -> tryAiChatTranslateEnToVi(cleanText), 1);
+            if (isAcceptable(cleanText, aiEnVi, false)) {
+                cache.put(cacheKey, aiEnVi);
+                return new TranslateResponse(aiEnVi, source, target, "ChatGPT");
             }
         }
 
@@ -336,6 +346,49 @@ public class TranslationService {
         if (u.endsWith("/v1")) return u + "/chat/completions";
         if (u.contains("/v1/")) return u; // already custom full endpoint
         return u + "/chat/completions";
+    }
+
+    @SuppressWarnings("unchecked")
+    private String tryAiChatTranslateEnToVi(String text) {
+        if (!aiEnabled) return "";
+        if (aiApiKey == null || aiApiKey.isBlank()) return "";
+
+        try {
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            headers.set("Authorization", "Bearer " + aiApiKey.trim());
+
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("model", aiModel);
+            payload.put("temperature", 0.1);
+            payload.put("max_tokens", 500);
+
+            List<Map<String, String>> messages = new ArrayList<>();
+            messages.add(Map.of(
+                    "role", "system",
+                    "content", "You are a translation engine. Translate English to natural Vietnamese only. Output only translated text. No explanation."
+            ));
+            messages.add(Map.of("role", "user", "content", text));
+            payload.put("messages", messages);
+
+            String endpoint = normalizeChatEndpoint(aiUrl);
+            HttpEntity<Map<String, Object>> req = new HttpEntity<>(payload, headers);
+            Map<String, Object> response = restTemplate.postForObject(endpoint, req, Map.class);
+            if (response == null) return "";
+
+            Object choicesObj = response.get("choices");
+            if (!(choicesObj instanceof List<?> choices) || choices.isEmpty()) return "";
+            if (!(choices.get(0) instanceof Map<?, ?> choiceMap)) return "";
+
+            Object messageObj = ((Map<?, ?>) choiceMap).get("message");
+            if (!(messageObj instanceof Map<?, ?> messageMap)) return "";
+            Object contentObj = ((Map<?, ?>) messageMap).get("content");
+            if (contentObj == null) return "";
+
+            return cleanTranslation(String.valueOf(contentObj));
+        } catch (Exception ignored) {
+            return "";
+        }
     }
 
     @SuppressWarnings("unchecked")
