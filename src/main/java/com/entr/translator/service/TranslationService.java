@@ -45,6 +45,7 @@ public class TranslationService {
 
     // Small in-memory cache for local stability/perf when users retry same text.
     private final Map<String, String> cache = new ConcurrentHashMap<>();
+    private static final int MAX_CHUNK_CHARS = 280;
 
     public TranslateResponse translate(String text, String source, String target) {
         if (text == null) return new TranslateResponse("", source, target, "LocalStable");
@@ -68,19 +69,23 @@ public class TranslationService {
         }
 
         if (translated == null || translated.isBlank()) translated = cleanText;
-        cache.put(cacheKey, translated);
+
+        // Cache only decent outputs; avoid poisoning cache with low-quality fallback text.
+        if (shouldCache(cleanText, translated, viToEn)) {
+            cache.put(cacheKey, translated);
+        }
+
         return new TranslateResponse(translated, source, target, "LocalStable");
     }
 
     private boolean shouldSplit(String text) {
-        if (text.length() > 120) return true;
-        return text.contains(".") || text.contains("?") || text.contains("!") || text.contains(";") || text.contains("\n");
+        if (text.length() > MAX_CHUNK_CHARS) return true;
+        return text.contains(".") || text.contains("?") || text.contains("!") || text.contains(";") || text.contains("\n") || text.contains(",");
     }
 
     private String translateLongTextBySentence(String text, String source, String target, boolean viToEn) {
-        // Split by sentence delimiters while preserving punctuation.
-        String[] parts = text.split("(?<=[.!?;\\n])\\s+");
-        if (parts.length <= 1) {
+        List<String> parts = splitIntoChunks(text, MAX_CHUNK_CHARS);
+        if (parts.isEmpty()) {
             return translateUnitRobust(text, source, target, viToEn);
         }
 
@@ -93,6 +98,66 @@ public class TranslationService {
         }
 
         return String.join(" ", out).replaceAll("\\s+", " ").trim();
+    }
+
+    private List<String> splitIntoChunks(String text, int maxChars) {
+        List<String> chunks = new ArrayList<>();
+        if (text == null || text.isBlank()) return chunks;
+
+        // First split on sentence-like boundaries.
+        String[] coarse = text.split("(?<=[.!?;\\n])\\s+");
+        for (String raw : coarse) {
+            String sentence = raw == null ? "" : raw.trim();
+            if (sentence.isBlank()) continue;
+
+            if (sentence.length() <= maxChars) {
+                chunks.add(sentence);
+                continue;
+            }
+
+            // Further split very long sentences by commas / spaces, keeping semantic coherence.
+            String[] byComma = sentence.split("(?<=,)\\s+");
+            StringBuilder current = new StringBuilder();
+
+            for (String pieceRaw : byComma) {
+                String piece = pieceRaw == null ? "" : pieceRaw.trim();
+                if (piece.isBlank()) continue;
+
+                if (piece.length() > maxChars) {
+                    // Hard wrap on words when no punctuation helps.
+                    String[] words = piece.split("\\s+");
+                    for (String w : words) {
+                        if (w == null || w.isBlank()) continue;
+                        if (current.length() == 0) {
+                            current.append(w);
+                        } else if (current.length() + 1 + w.length() <= maxChars) {
+                            current.append(' ').append(w);
+                        } else {
+                            chunks.add(current.toString().trim());
+                            current.setLength(0);
+                            current.append(w);
+                        }
+                    }
+                    continue;
+                }
+
+                if (current.length() == 0) {
+                    current.append(piece);
+                } else if (current.length() + 1 + piece.length() <= maxChars) {
+                    current.append(' ').append(piece);
+                } else {
+                    chunks.add(current.toString().trim());
+                    current.setLength(0);
+                    current.append(piece);
+                }
+            }
+
+            if (current.length() > 0) {
+                chunks.add(current.toString().trim());
+            }
+        }
+
+        return chunks;
     }
 
     private String translateUnitRobust(String text, String source, String target, boolean strictEnglish) {
@@ -343,6 +408,15 @@ public class TranslationService {
         if (t.equalsIgnoreCase(s)) return false;
         if (looksEncodedJunk(t)) return false;
         if (strictEnglish && !isLikelyEnglishOnly(t)) return false;
+
+        return true;
+    }
+
+    private boolean shouldCache(String src, String translated, boolean strictEnglish) {
+        if (!isAcceptable(src, translated, strictEnglish)) return false;
+
+        // Avoid caching suspiciously short outputs for long inputs.
+        if (src.length() > 80 && translated.length() < 12) return false;
 
         return true;
     }
