@@ -28,6 +28,12 @@ public class TranslationService {
     @Value("${app.translate.google.api-key:}")
     private String googleApiKey;
 
+    @Value("${app.translate.libre.enabled:true}")
+    private boolean libreEnabled;
+
+    @Value("${app.translate.libre.url:https://libretranslate.de/translate}")
+    private String libreUrl;
+
     @Value("${app.translate.argos.enabled:true}")
     private boolean argosEnabled;
 
@@ -91,10 +97,14 @@ public class TranslationService {
 
     private String translateUnitRobust(String text, String source, String target, boolean strictEnglish) {
         // Provider order for free/local stability:
-        // 1) Argos local offline (if available)
-        // 2) Google Cloud (if key exists)
-        // 3) MyMemory
-        // 4) Google public fallback
+        // 1) LibreTranslate public instance
+        // 2) Argos local offline (if available)
+        // 3) Google Cloud (if key exists)
+        // 4) MyMemory
+        // 5) Google public fallback
+
+        String libre = retryProvider(() -> tryLibreTranslate(text, source, target), 1);
+        if (isAcceptable(text, libre, strictEnglish)) return libre;
 
         String argos = retryProvider(() -> tryArgosLocal(text, source, target), 1);
         if (isAcceptable(text, argos, strictEnglish)) return argos;
@@ -134,6 +144,31 @@ public class TranslationService {
             }
         }
         return "";
+    }
+
+    @SuppressWarnings("unchecked")
+    private String tryLibreTranslate(String text, String source, String target) {
+        if (!libreEnabled) return "";
+        try {
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+
+            Map<String, Object> body = new HashMap<>();
+            body.put("q", text);
+            body.put("source", source);
+            body.put("target", target);
+            body.put("format", "text");
+
+            HttpEntity<Map<String, Object>> req = new HttpEntity<>(body, headers);
+            Map<String, Object> response = restTemplate.postForObject(libreUrl, req, Map.class);
+            if (response == null) return "";
+
+            Object translated = response.get("translatedText");
+            if (translated == null) return "";
+            return cleanTranslation(String.valueOf(translated));
+        } catch (Exception ignored) {
+            return "";
+        }
     }
 
     private String tryArgosLocal(String text, String source, String target) {
