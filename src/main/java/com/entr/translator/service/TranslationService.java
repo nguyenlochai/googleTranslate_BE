@@ -1,6 +1,10 @@
 package com.entr.translator.service;
 
 import com.entr.translator.dto.TranslateResponse;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
@@ -8,6 +12,7 @@ import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.text.Normalizer;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -15,82 +20,99 @@ import java.util.Map;
 public class TranslationService {
     private final RestTemplate restTemplate = new RestTemplate();
 
+    @Value("${app.translate.google.api-key:}")
+    private String googleApiKey;
+
     @SuppressWarnings("unchecked")
     public TranslateResponse translate(String text, String source, String target) {
-        if (text == null) return new TranslateResponse("", source, target, "MyMemory");
+        if (text == null) return new TranslateResponse("", source, target, "GoogleCloud");
 
         String cleanText = text.trim();
-        if (cleanText.isBlank()) return new TranslateResponse("", source, target, "MyMemory");
+        if (cleanText.isBlank()) return new TranslateResponse("", source, target, "GoogleCloud");
 
-        boolean enToVi = "en".equalsIgnoreCase(source) && "vi".equalsIgnoreCase(target);
-        boolean viToEn = "vi".equalsIgnoreCase(source) && "en".equalsIgnoreCase(target);
-
-        // EN -> VI: ưu tiên Google fallback để ra kết quả tự nhiên hơn.
-        if (enToVi) {
-            String g = tryGoogle(cleanText, source, target);
-            if (isUsableTranslation(cleanText, g)) {
-                return new TranslateResponse(g, source, target, "GoogleFallback");
-            }
-
-            String mm = tryMyMemory(cleanText, source, target);
-            if (isUsableTranslation(cleanText, mm)) {
-                return new TranslateResponse(mm, source, target, "MyMemory");
-            }
-
-            return new TranslateResponse(cleanText, source, target, "FallbackOriginal");
+        // 1) Prefer official Google Cloud Translate API for GG-like quality.
+        String cloud = tryGoogleCloud(cleanText, source, target);
+        if (isUsableTranslation(cleanText, cloud)) {
+            return new TranslateResponse(cloud, source, target, "GoogleCloud");
         }
 
-        // VI -> EN: chỉ tối ưu riêng nhánh này, không ảnh hưởng logic khác.
+        // 2) Fallbacks only when API key missing/error.
+        boolean viToEn = "vi".equalsIgnoreCase(source) && "en".equalsIgnoreCase(target);
+        boolean enToVi = "en".equalsIgnoreCase(source) && "vi".equalsIgnoreCase(target);
+
         if (viToEn) {
-            // Ưu tiên MyMemory trước vì thường ra câu EN ổn định hơn cho tiếng Việt có dấu.
             String mm = tryMyMemory(cleanText, source, target);
             if (isUsableTranslation(cleanText, mm) && isLikelyEnglishOnly(mm)) {
                 return new TranslateResponse(mm, source, target, "MyMemory");
             }
 
-            String gDirect = tryGoogleViToEnDirect(cleanText);
-            if (isUsableTranslation(cleanText, gDirect) && isLikelyEnglishOnly(gDirect)) {
-                return new TranslateResponse(gDirect, source, target, "GoogleViEnDirect");
-            }
-
-            String g = tryGoogle(cleanText, source, target);
+            String g = tryGooglePublic(cleanText, source, target);
             if (isUsableTranslation(cleanText, g) && isLikelyEnglishOnly(g)) {
-                return new TranslateResponse(g, source, target, "GoogleFallback");
+                return new TranslateResponse(g, source, target, "GooglePublicFallback");
             }
 
             String ascii = removeVietnameseDiacritics(cleanText);
-            if (!ascii.equalsIgnoreCase(cleanText) && !ascii.isBlank()) {
-                String mmAscii = tryMyMemory(ascii, source, target);
-                if (isUsableTranslation(ascii, mmAscii) && isLikelyEnglishOnly(mmAscii)) {
-                    return new TranslateResponse(mmAscii, source, target, "MyMemoryAsciiFallback");
-                }
-
-                String gAscii = tryGoogleViToEnDirect(ascii);
+            if (!ascii.equalsIgnoreCase(cleanText)) {
+                String gAscii = tryGooglePublic(ascii, source, target);
                 if (isUsableTranslation(ascii, gAscii) && isLikelyEnglishOnly(gAscii)) {
-                    return new TranslateResponse(gAscii, source, target, "GoogleViEnAsciiDirect");
-                }
-
-                String gAsciiFallback = tryGoogle(ascii, source, target);
-                if (isUsableTranslation(ascii, gAsciiFallback) && isLikelyEnglishOnly(gAsciiFallback)) {
-                    return new TranslateResponse(gAsciiFallback, source, target, "GoogleAsciiFallback");
+                    return new TranslateResponse(gAscii, source, target, "GoogleAsciiFallback");
                 }
             }
 
             return new TranslateResponse(cleanText, source, target, "FallbackOriginal");
         }
 
-        // Other language pairs
+        if (enToVi) {
+            String g = tryGooglePublic(cleanText, source, target);
+            if (isUsableTranslation(cleanText, g)) {
+                return new TranslateResponse(g, source, target, "GooglePublicFallback");
+            }
+            String mm = tryMyMemory(cleanText, source, target);
+            if (isUsableTranslation(cleanText, mm)) {
+                return new TranslateResponse(mm, source, target, "MyMemory");
+            }
+            return new TranslateResponse(cleanText, source, target, "FallbackOriginal");
+        }
+
         String mm = tryMyMemory(cleanText, source, target);
         if (isUsableTranslation(cleanText, mm)) {
             return new TranslateResponse(mm, source, target, "MyMemory");
         }
 
-        String g = tryGoogle(cleanText, source, target);
-        if (isUsableTranslation(cleanText, g)) {
-            return new TranslateResponse(g, source, target, "GoogleFallback");
-        }
-
         return new TranslateResponse(cleanText, source, target, "FallbackOriginal");
+    }
+
+    @SuppressWarnings("unchecked")
+    private String tryGoogleCloud(String text, String source, String target) {
+        try {
+            if (googleApiKey == null || googleApiKey.isBlank()) return "";
+
+            String url = "https://translation.googleapis.com/language/translate/v2?key=" +
+                    URLEncoder.encode(googleApiKey.trim(), StandardCharsets.UTF_8);
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+
+            Map<String, Object> body = new HashMap<>();
+            body.put("q", text);
+            body.put("source", source);
+            body.put("target", target);
+            body.put("format", "text");
+
+            HttpEntity<Map<String, Object>> req = new HttpEntity<>(body, headers);
+            Map<String, Object> response = restTemplate.postForObject(url, req, Map.class);
+            if (response == null) return "";
+
+            Map<String, Object> data = (Map<String, Object>) response.get("data");
+            if (data == null) return "";
+            List<Map<String, Object>> translations = (List<Map<String, Object>>) data.get("translations");
+            if (translations == null || translations.isEmpty()) return "";
+
+            String translated = String.valueOf(translations.get(0).getOrDefault("translatedText", ""));
+            return decodeGoogleHtmlEntities(safeMultiDecode(translated));
+        } catch (Exception ignored) {
+            return "";
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -109,15 +131,10 @@ public class TranslationService {
                     : "";
 
             translatedText = safeMultiDecode(translatedText);
-
-            // Nếu top-level yếu, lấy bản tốt nhất từ matches
             if (!isUsableTranslation(text, translatedText)) {
-                String bestFromMatches = extractBestMyMemoryMatch(response, text);
-                if (isUsableTranslation(text, bestFromMatches)) {
-                    translatedText = bestFromMatches;
-                }
+                String best = extractBestMyMemoryMatch(response, text);
+                if (isUsableTranslation(text, best)) translatedText = best;
             }
-
             return translatedText;
         } catch (Exception ignored) {
             return "";
@@ -125,7 +142,7 @@ public class TranslationService {
     }
 
     @SuppressWarnings("unchecked")
-    private String tryGoogle(String text, String source, String target) {
+    private String tryGooglePublic(String text, String source, String target) {
         try {
             String url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=" +
                     source + "&tl=" + target + "&dt=t&q=" + URLEncoder.encode(text, StandardCharsets.UTF_8);
@@ -139,59 +156,13 @@ public class TranslationService {
             StringBuilder sb = new StringBuilder();
             for (Object s : sentences) {
                 if (s instanceof List<?> row && !row.isEmpty() && row.get(0) != null) {
-                    sb.append(row.get(0).toString());
+                    sb.append(row.get(0));
                 }
             }
-
             return safeMultiDecode(sb.toString());
         } catch (Exception ignored) {
             return "";
         }
-    }
-
-    private String tryGoogleViToEnDirect(String text) {
-        try {
-            String url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=vi&tl=en&dt=t&q=" +
-                    URLEncoder.encode(text, StandardCharsets.UTF_8);
-
-            String raw = restTemplate.getForObject(url, String.class);
-            if (raw == null || raw.isBlank()) return "";
-
-            // Response starts like: [[["let's go play","di choi ..."
-            int firstQuote = raw.indexOf('"');
-            if (firstQuote < 0) return "";
-            int secondQuote = findStringEnd(raw, firstQuote + 1);
-            if (secondQuote <= firstQuote) return "";
-
-            String extracted = raw.substring(firstQuote + 1, secondQuote)
-                    .replace("\\n", "\n")
-                    .replace("\\\"", "\"")
-                    .replace("\\/", "/")
-                    .replace("\\u003c", "<")
-                    .replace("\\u003e", ">")
-                    .replace("\\u0026", "&");
-
-            return safeMultiDecode(extracted);
-        } catch (Exception ignored) {
-            return "";
-        }
-    }
-
-    private int findStringEnd(String s, int from) {
-        boolean escaped = false;
-        for (int i = from; i < s.length(); i++) {
-            char c = s.charAt(i);
-            if (escaped) {
-                escaped = false;
-                continue;
-            }
-            if (c == '\\') {
-                escaped = true;
-                continue;
-            }
-            if (c == '"') return i;
-        }
-        return -1;
     }
 
     @SuppressWarnings("unchecked")
@@ -205,7 +176,6 @@ public class TranslationService {
         for (Object m : matches) {
             if (!(m instanceof Map<?, ?> rawMap)) continue;
             Map<String, Object> match = (Map<String, Object>) rawMap;
-
             Object translationObj = match.get("translation");
             if (translationObj == null) continue;
 
@@ -218,40 +188,35 @@ public class TranslationService {
                 best = candidate;
             }
         }
-
         return best;
-    }
-
-    private double toDouble(Object v) {
-        if (v == null) return -1.0;
-        if (v instanceof Number n) return n.doubleValue();
-        try {
-            return Double.parseDouble(String.valueOf(v));
-        } catch (Exception e) {
-            return -1.0;
-        }
     }
 
     private String safeMultiDecode(String input) {
         if (input == null) return "";
-        String out = input.trim();
+        String out = input.trim().replaceAll("%\\s+", "%");
 
-        // Fix malformed percent-encoding like "% C3" or "% 20"
-        out = out.replaceAll("%\\s+", "%");
-
-        // Decode up to 4 rounds for cases like s%2525C3%2525A1ch -> s%25C3%25A1ch -> s%C3%A1ch -> sách
         for (int i = 0; i < 4; i++) {
             try {
                 String decoded = URLDecoder.decode(out, StandardCharsets.UTF_8);
                 if (decoded.equals(out)) break;
-                out = decoded;
-                out = out.replaceAll("%\\s+", "%");
+                out = decoded.replaceAll("%\\s+", "%");
             } catch (Exception e) {
                 break;
             }
         }
 
         return out.trim();
+    }
+
+    private String decodeGoogleHtmlEntities(String input) {
+        if (input == null) return "";
+        return input
+                .replace("&quot;", "\"")
+                .replace("&#39;", "'")
+                .replace("&amp;", "&")
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&nbsp;", " ");
     }
 
     private String removeVietnameseDiacritics(String input) {
@@ -262,15 +227,12 @@ public class TranslationService {
 
     private boolean isLikelyEnglishOnly(String text) {
         if (text == null || text.isBlank()) return false;
-
         String lower = text.toLowerCase();
 
-        // Reject Vietnamese accented chars.
         if (lower.matches(".*[đăâêôơưáàảãạấầẩẫậắằẳẵặéèẻẽẹếềểễệíìỉĩịóòỏõọốồổỗộớờởỡợúùủũụứừửữựýỳỷỹỵ].*")) {
             return false;
         }
 
-        // Reject common unaccented Vietnamese tokens to avoid mixed outputs like "di choi thoi nao".
         String normalized = lower.replaceAll("[^a-z\\s]", " ").replaceAll("\\s+", " ").trim();
         if (normalized.isBlank()) return false;
 
@@ -286,11 +248,16 @@ public class TranslationService {
 
     private boolean isUsableTranslation(String sourceText, String translatedText) {
         if (translatedText == null || translatedText.isBlank()) return false;
+        return !sourceText.trim().equalsIgnoreCase(translatedText.trim());
+    }
 
-        String src = sourceText.trim();
-        String dst = translatedText.trim();
-
-        // reject unchanged responses (common provider failure)
-        return !src.equalsIgnoreCase(dst);
+    private double toDouble(Object v) {
+        if (v == null) return -1.0;
+        if (v instanceof Number n) return n.doubleValue();
+        try {
+            return Double.parseDouble(String.valueOf(v));
+        } catch (Exception e) {
+            return -1.0;
+        }
     }
 }
