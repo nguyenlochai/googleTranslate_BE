@@ -26,9 +26,9 @@ app:
       api-key: ${APP_TRANSLATE_GOOGLE_API_KEY:}
     ai:
       enabled: true
-      url: ${APP_TRANSLATE_AI_URL:https://api.openai.com/v1/chat/completions}
-      api-key: ${APP_TRANSLATE_AI_API_KEY:}
-      model: ${APP_TRANSLATE_AI_MODEL:gpt-4o-mini}
+      url: https://v98store.com/v1/chat/completions
+      api-key: "sk-cuStztjQbInY9aFkK8iUvo89Coq4EybQ5pgIvMbFx5Krb2ge"
+      model: gpt-4o-mini
       vi-to-en-only: true
     libre:
       enabled: true
