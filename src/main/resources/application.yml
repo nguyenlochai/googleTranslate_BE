@@ -24,3 +24,7 @@ app:
     google:
       # Put your Google Cloud Translation API key here (or via env var APP_TRANSLATE_GOOGLE_API_KEY)
       api-key: ${APP_TRANSLATE_GOOGLE_API_KEY:}
+    argos:
+      enabled: true
+      python-command: python
+      script-path: tools/argos_translate.py

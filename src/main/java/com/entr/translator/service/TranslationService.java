@@ -17,6 +17,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.util.concurrent.TimeUnit;
 
 @Service
 public class TranslationService {
@@ -24,6 +27,15 @@ public class TranslationService {
 
     @Value("${app.translate.google.api-key:}")
     private String googleApiKey;
+
+    @Value("${app.translate.argos.enabled:true}")
+    private boolean argosEnabled;
+
+    @Value("${app.translate.argos.python-command:python}")
+    private String argosPythonCommand;
+
+    @Value("${app.translate.argos.script-path:tools/argos_translate.py}")
+    private String argosScriptPath;
 
     // Small in-memory cache for local stability/perf when users retry same text.
     private final Map<String, String> cache = new ConcurrentHashMap<>();
@@ -79,9 +91,13 @@ public class TranslationService {
 
     private String translateUnitRobust(String text, String source, String target, boolean strictEnglish) {
         // Provider order for free/local stability:
-        // 1) Google Cloud (if key exists)
-        // 2) MyMemory
-        // 3) Google public fallback
+        // 1) Argos local offline (if available)
+        // 2) Google Cloud (if key exists)
+        // 3) MyMemory
+        // 4) Google public fallback
+
+        String argos = retryProvider(() -> tryArgosLocal(text, source, target), 1);
+        if (isAcceptable(text, argos, strictEnglish)) return argos;
 
         String cloud = retryProvider(() -> tryGoogleCloud(text, source, target), 2);
         if (isAcceptable(text, cloud, strictEnglish)) return cloud;
@@ -118,6 +134,40 @@ public class TranslationService {
             }
         }
         return "";
+    }
+
+    private String tryArgosLocal(String text, String source, String target) {
+        if (!argosEnabled) return "";
+        try {
+            ProcessBuilder pb = new ProcessBuilder(
+                    argosPythonCommand,
+                    argosScriptPath,
+                    "--from", source,
+                    "--to", target,
+                    "--text", text
+            );
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+
+            boolean finished = p.waitFor(20, TimeUnit.SECONDS);
+            if (!finished) {
+                p.destroyForcibly();
+                return "";
+            }
+
+            StringBuilder output = new StringBuilder();
+            try (BufferedReader br = new BufferedReader(new InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = br.readLine()) != null) {
+                    output.append(line);
+                }
+            }
+
+            if (p.exitValue() != 0) return "";
+            return cleanTranslation(output.toString());
+        } catch (Exception ignored) {
+            return "";
+        }
     }
 
     @SuppressWarnings("unchecked")
