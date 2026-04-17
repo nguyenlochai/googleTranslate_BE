@@ -40,6 +40,9 @@ public class TranslationService {
     @Value("${app.translate.ai.model:gpt-4o-mini}")
     private String aiModel;
 
+    @Value("${app.translate.ai.vi-to-en-only:true}")
+    private boolean aiOnlyViToEn;
+
     @Value("${app.translate.libre.enabled:true}")
     private boolean libreEnabled;
 
@@ -73,12 +76,16 @@ public class TranslationService {
 
         boolean viToEn = "vi".equalsIgnoreCase(source) && "en".equalsIgnoreCase(target);
 
-        // If user wants ChatGPT-style translation, try it first for vi -> en and expose provider clearly.
+        // ChatGPT-first for vi -> en. Optionally enforce AI-only mode.
         if (viToEn) {
             String aiDirect = retryProvider(() -> tryAiChatTranslateViToEn(cleanText), 1);
             if (isAcceptable(cleanText, aiDirect, true)) {
                 cache.put(cacheKey, aiDirect);
                 return new TranslateResponse(aiDirect, source, target, "ChatGPT");
+            }
+
+            if (aiOnlyViToEn) {
+                return new TranslateResponse("[ChatGPT unavailable: check APP_TRANSLATE_AI_API_KEY / APP_TRANSLATE_AI_URL]", source, target, "ChatGPTUnavailable");
             }
         }
 

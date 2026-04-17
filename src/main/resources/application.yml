@@ -29,6 +29,7 @@ app:
       url: ${APP_TRANSLATE_AI_URL:https://api.openai.com/v1/chat/completions}
       api-key: ${APP_TRANSLATE_AI_API_KEY:}
       model: ${APP_TRANSLATE_AI_MODEL:gpt-4o-mini}
+      vi-to-en-only: true
     libre:
       enabled: true
       url: https://libretranslate.de/translate
