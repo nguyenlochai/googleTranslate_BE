@@ -16,6 +16,12 @@ spring:
         format_sql: true
         dialect: org.hibernate.dialect.MySQL8Dialect
 
+openai:
+  api:
+    key: ""
+    base-url: "https://v98store.com/v1"
+    model: "gpt-4o-mini"
+
 app:
   jwt:
     secret: very-secret-key-change-this-in-production-very-secret-key
@@ -26,9 +32,9 @@ app:
       api-key: ${APP_TRANSLATE_GOOGLE_API_KEY:}
     ai:
       enabled: true
-      url: https://v98store.com/v1/chat/completions
-      api-key: "sk-cuStztjQbInY9aFkK8iUvo89Coq4EybQ5pgIvMbFx5Krb2ge"
-      model: gpt-4o-mini
+      url: ${openai.api.base-url:https://api.openai.com/v1}/chat/completions
+      api-key: ${openai.api.key:}
+      model: ${openai.api.model:gpt-4o-mini}
       vi-to-en-only: true
     libre:
       enabled: true

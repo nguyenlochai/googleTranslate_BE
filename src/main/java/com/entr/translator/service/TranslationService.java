@@ -31,13 +31,13 @@ public class TranslationService {
     @Value("${app.translate.ai.enabled:true}")
     private boolean aiEnabled;
 
-    @Value("${app.translate.ai.url:https://api.openai.com/v1/chat/completions}")
+    @Value("${app.translate.ai.url:${openai.api.base-url:https://api.openai.com/v1}/chat/completions}")
     private String aiUrl;
 
-    @Value("${app.translate.ai.api-key:}")
+    @Value("${app.translate.ai.api-key:${openai.api.key:}}")
     private String aiApiKey;
 
-    @Value("${app.translate.ai.model:gpt-4o-mini}")
+    @Value("${app.translate.ai.model:${openai.api.model:gpt-4o-mini}}")
     private String aiModel;
 
     @Value("${app.translate.ai.vi-to-en-only:true}")
@@ -282,8 +282,9 @@ public class TranslationService {
             messages.add(Map.of("role", "user", "content", text));
             payload.put("messages", messages);
 
+            String endpoint = normalizeChatEndpoint(aiUrl);
             HttpEntity<Map<String, Object>> req = new HttpEntity<>(payload, headers);
-            Map<String, Object> response = restTemplate.postForObject(aiUrl, req, Map.class);
+            Map<String, Object> response = restTemplate.postForObject(endpoint, req, Map.class);
             if (response == null) return "";
 
             Object choicesObj = response.get("choices");
@@ -299,6 +300,16 @@ public class TranslationService {
         } catch (Exception ignored) {
             return "";
         }
+    }
+
+    private String normalizeChatEndpoint(String raw) {
+        if (raw == null || raw.isBlank()) return "https://api.openai.com/v1/chat/completions";
+        String u = raw.trim();
+        if (u.endsWith("/chat/completions")) return u;
+        if (u.endsWith("/")) u = u.substring(0, u.length() - 1);
+        if (u.endsWith("/v1")) return u + "/chat/completions";
+        if (u.contains("/v1/")) return u; // already custom full endpoint
+        return u + "/chat/completions";
     }
 
     @SuppressWarnings("unchecked")
