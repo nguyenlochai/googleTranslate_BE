@@ -43,17 +43,17 @@ public class TranslationService {
         // VI -> EN: thêm nhánh riêng, ưu tiên Google text endpoint để tránh kết quả trộn Việt/Anh.
         if (viToEn) {
             String gDirect = tryGoogleViToEnDirect(cleanText);
-            if (isUsableTranslation(cleanText, gDirect)) {
+            if (isUsableTranslation(cleanText, gDirect) && isLikelyEnglishOnly(gDirect)) {
                 return new TranslateResponse(gDirect, source, target, "GoogleViEnDirect");
             }
 
             String mm = tryMyMemory(cleanText, source, target);
-            if (isUsableTranslation(cleanText, mm)) {
+            if (isUsableTranslation(cleanText, mm) && isLikelyEnglishOnly(mm)) {
                 return new TranslateResponse(mm, source, target, "MyMemory");
             }
 
             String g = tryGoogle(cleanText, source, target);
-            if (isUsableTranslation(cleanText, g)) {
+            if (isUsableTranslation(cleanText, g) && isLikelyEnglishOnly(g)) {
                 return new TranslateResponse(g, source, target, "GoogleFallback");
             }
 
@@ -253,6 +253,12 @@ public class TranslationService {
         String s = input.replace('đ', 'd').replace('Đ', 'D');
         String normalized = Normalizer.normalize(s, Normalizer.Form.NFD);
         return normalized.replaceAll("\\p{M}+", "");
+    }
+
+    private boolean isLikelyEnglishOnly(String text) {
+        if (text == null || text.isBlank()) return false;
+        // Reject mixed Vietnamese output such as: "ngày tomorrow tôi..."
+        return !text.matches(".*[đĐăĂâÂêÊôÔơƠưƯáàảãạấầẩẫậắằẳẵặéèẻẽẹếềểễệíìỉĩịóòỏõọốồổỗộớờởỡợúùủũụứừửữựýỳỷỹỵ].*");
     }
 
     private boolean isUsableTranslation(String sourceText, String translatedText) {
