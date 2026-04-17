@@ -18,7 +18,7 @@ spring:
 
 openai:
   api:
-    key: ""
+    key: "sk-cuStztjQbInY9aFkK8iUvo89Coq4EybQ5pgIvMbFx5Krb2ge"
     base-url: "https://v98store.com/v1"
     model: "gpt-4o-mini"
 
@@ -31,11 +31,11 @@ app:
       # Put your Google Cloud Translation API key here (or via env var APP_TRANSLATE_GOOGLE_API_KEY)
       api-key: ${APP_TRANSLATE_GOOGLE_API_KEY:}
     ai:
-      enabled: true
+      enabled: false
       url: ${openai.api.base-url:https://api.openai.com/v1}/chat/completions
       api-key: ${openai.api.key:}
       model: ${openai.api.model:gpt-4o-mini}
-      vi-to-en-only: true
+      vi-to-en-only: false
     libre:
       enabled: true
       url: https://libretranslate.de/translate
