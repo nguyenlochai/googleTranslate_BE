@@ -28,6 +28,18 @@ public class TranslationService {
     @Value("${app.translate.google.api-key:}")
     private String googleApiKey;
 
+    @Value("${app.translate.ai.enabled:true}")
+    private boolean aiEnabled;
+
+    @Value("${app.translate.ai.url:https://api.openai.com/v1/chat/completions}")
+    private String aiUrl;
+
+    @Value("${app.translate.ai.api-key:}")
+    private String aiApiKey;
+
+    @Value("${app.translate.ai.model:gpt-4o-mini}")
+    private String aiModel;
+
     @Value("${app.translate.libre.enabled:true}")
     private boolean libreEnabled;
 
@@ -162,6 +174,11 @@ public class TranslationService {
 
     private String translateUnitRobust(String text, String source, String target, boolean strictEnglish) {
         // Short vi->en phrases need a stricter path to avoid outputs like "sach attempt".
+        if (strictEnglish) {
+            String ai = retryProvider(() -> tryAiChatTranslateViToEn(text), 1);
+            if (isAcceptable(text, ai, true)) return ai;
+        }
+
         if (strictEnglish && countWords(text) <= 4) {
             String mmVi = retryProvider(() -> tryMyMemory(text, "vi", "en"), 2);
             if (isAcceptable(text, mmVi, true)) return mmVi;
@@ -224,6 +241,48 @@ public class TranslationService {
             }
         }
         return "";
+    }
+
+    @SuppressWarnings("unchecked")
+    private String tryAiChatTranslateViToEn(String text) {
+        if (!aiEnabled) return "";
+        if (aiApiKey == null || aiApiKey.isBlank()) return "";
+
+        try {
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            headers.set("Authorization", "Bearer " + aiApiKey.trim());
+
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("model", aiModel);
+            payload.put("temperature", 0.1);
+            payload.put("max_tokens", 300);
+
+            List<Map<String, String>> messages = new ArrayList<>();
+            messages.add(Map.of(
+                    "role", "system",
+                    "content", "You are a translation engine. Translate Vietnamese to natural English only. Output only translated text. No explanation."
+            ));
+            messages.add(Map.of("role", "user", "content", text));
+            payload.put("messages", messages);
+
+            HttpEntity<Map<String, Object>> req = new HttpEntity<>(payload, headers);
+            Map<String, Object> response = restTemplate.postForObject(aiUrl, req, Map.class);
+            if (response == null) return "";
+
+            Object choicesObj = response.get("choices");
+            if (!(choicesObj instanceof List<?> choices) || choices.isEmpty()) return "";
+            if (!(choices.get(0) instanceof Map<?, ?> choiceMap)) return "";
+
+            Object messageObj = ((Map<?, ?>) choiceMap).get("message");
+            if (!(messageObj instanceof Map<?, ?> messageMap)) return "";
+            Object contentObj = ((Map<?, ?>) messageMap).get("content");
+            if (contentObj == null) return "";
+
+            return cleanTranslation(String.valueOf(contentObj));
+        } catch (Exception ignored) {
+            return "";
+        }
     }
 
     @SuppressWarnings("unchecked")

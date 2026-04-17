@@ -24,6 +24,11 @@ app:
     google:
       # Put your Google Cloud Translation API key here (or via env var APP_TRANSLATE_GOOGLE_API_KEY)
       api-key: ${APP_TRANSLATE_GOOGLE_API_KEY:}
+    ai:
+      enabled: true
+      url: ${APP_TRANSLATE_AI_URL:https://api.openai.com/v1/chat/completions}
+      api-key: ${APP_TRANSLATE_AI_API_KEY:}
+      model: ${APP_TRANSLATE_AI_MODEL:gpt-4o-mini}
     libre:
       enabled: true
       url: https://libretranslate.de/translate
