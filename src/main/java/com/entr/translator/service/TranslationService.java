@@ -36,6 +36,14 @@ public class TranslationService {
 
                 translatedText = safeMultiDecode(translatedText);
 
+                // If MyMemory top-level output is weak, try best candidate from `matches` list.
+                if (!isUsableTranslation(cleanText, translatedText)) {
+                    String bestFromMatches = extractBestMyMemoryMatch(response, cleanText);
+                    if (isUsableTranslation(cleanText, bestFromMatches)) {
+                        translatedText = bestFromMatches;
+                    }
+                }
+
                 // If MyMemory gives a usable translation, return it.
                 if (isUsableTranslation(cleanText, translatedText)) {
                     return new TranslateResponse(translatedText, source, target, "MyMemory");
@@ -78,6 +86,44 @@ public class TranslationService {
         }
 
         return safeMultiDecode(sb.toString());
+    }
+
+    @SuppressWarnings("unchecked")
+    private String extractBestMyMemoryMatch(Map<String, Object> response, String sourceText) {
+        Object matchesObj = response.get("matches");
+        if (!(matchesObj instanceof List<?> matches) || matches.isEmpty()) return "";
+
+        String best = "";
+        double bestScore = -1.0;
+
+        for (Object m : matches) {
+            if (!(m instanceof Map<?, ?> rawMap)) continue;
+            Map<String, Object> match = (Map<String, Object>) rawMap;
+
+            Object translationObj = match.get("translation");
+            if (translationObj == null) continue;
+
+            String candidate = safeMultiDecode(String.valueOf(translationObj));
+            if (!isUsableTranslation(sourceText, candidate)) continue;
+
+            double score = toDouble(match.get("match"));
+            if (score > bestScore) {
+                bestScore = score;
+                best = candidate;
+            }
+        }
+
+        return best;
+    }
+
+    private double toDouble(Object v) {
+        if (v == null) return -1.0;
+        if (v instanceof Number n) return n.doubleValue();
+        try {
+            return Double.parseDouble(String.valueOf(v));
+        } catch (Exception e) {
+            return -1.0;
+        }
     }
 
     private String safeMultiDecode(String input) {
