@@ -73,6 +73,15 @@ public class TranslationService {
 
         boolean viToEn = "vi".equalsIgnoreCase(source) && "en".equalsIgnoreCase(target);
 
+        // If user wants ChatGPT-style translation, try it first for vi -> en and expose provider clearly.
+        if (viToEn) {
+            String aiDirect = retryProvider(() -> tryAiChatTranslateViToEn(cleanText), 1);
+            if (isAcceptable(cleanText, aiDirect, true)) {
+                cache.put(cacheKey, aiDirect);
+                return new TranslateResponse(aiDirect, source, target, "ChatGPT");
+            }
+        }
+
         String translated;
         if (shouldSplit(cleanText)) {
             translated = translateLongTextBySentence(cleanText, source, target, viToEn);
