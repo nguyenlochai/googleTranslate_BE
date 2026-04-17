@@ -16,7 +16,30 @@ spring:
         format_sql: true
         dialect: org.hibernate.dialect.MySQL8Dialect
 
+openai:
+  api:
+    key: "sk-1aTMOlp0nezYpI0wodylVtW6iJWU4BAs5gZ3Ubzb8QhD8MUs"
+    base-url: "https://v98store.com/v1"
+    model: "gpt-4o-mini"
+
 app:
   jwt:
     secret: very-secret-key-change-this-in-production-very-secret-key
     expiration-ms: 86400000
+  translate:
+    google:
+      # Put your Google Cloud Translation API key here (or via env var APP_TRANSLATE_GOOGLE_API_KEY)
+      api-key: ${APP_TRANSLATE_GOOGLE_API_KEY:}
+    ai:
+      enabled: true
+      url: ${openai.api.base-url:https://api.openai.com/v1}/chat/completions
+      api-key: ${openai.api.key:}
+      model: ${openai.api.model:gpt-4o-mini}
+      vi-to-en-only: true
+    libre:
+      enabled: false
+      url: https://libretranslate.de/translate
+    argos:
+      enabled: true
+      python-command: python
+      script-path: tools/argos_translate.py

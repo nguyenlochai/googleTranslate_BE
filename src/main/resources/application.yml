@@ -18,7 +18,7 @@ spring:
 
 openai:
   api:
-    key: "sk-cuStztjQbInY9aFkK8iUvo89Coq4EybQ5pgIvMbFx5Krb2ge"
+    key: "sk-1aTMOlp0nezYpI0wodylVtW6iJWU4BAs5gZ3Ubzb8QhD8MUs"
     base-url: "https://v98store.com/v1"
     model: "gpt-4o-mini"
 

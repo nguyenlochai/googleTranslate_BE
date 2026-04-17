@@ -1,2 +1,3 @@
 com\entr\translator\controller\SentenceController.class
+com\entr\translator\service\TranslationService$ProviderCall.class
 com\entr\translator\controller\StatsController.class
